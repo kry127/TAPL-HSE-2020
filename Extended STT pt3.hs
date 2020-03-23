@@ -48,7 +48,7 @@ shift val term = go 0 val term
     go thres inc (t1 :@: t2) = go thres inc t1 :@: go thres inc t2
     go thres inc (Lmb name type' t) = Lmb name type' $ go (thres + 1) inc t
     go thres inc (If t1 t2 t3) = If (go thres inc t1) (go thres inc t2) (go thres inc t3)
-    go thres inc (Let s t1 t2) = Let s (go thres inc t1) (go thres inc t2)
+    go thres inc (Let s t1 t2) | Just off <- length <$> match s t1 = Let s (go thres inc t1) (go (thres+off) inc t2)
     go thres inc (Pair t1 t2) = Pair (go thres inc t1) (go thres inc t2)
     go thres inc (Fst t) = Fst (go thres inc t)
     go thres inc (Snd t) = Snd (go thres inc t)
@@ -60,7 +60,7 @@ substDB j s t@(Idx x) | x == j    = s
 substDB j s (t1 :@: t2) = substDB j s t1 :@: substDB j s t2
 substDB j s (Lmb name type' t) = Lmb name type' $ substDB (j + 1) (shift 1 s) t
 substDB j s (If t1 t2 t3) = If (substDB j s t1) (substDB j s t2) (substDB j s t3)
-substDB j s (Let s' t1 t2) = Let s' (substDB (j + 1) (shift 1 s) t1) (substDB (j + 1) (shift 1 s) t2)
+substDB j s (Let s' t1 t2) | Just off <- length <$> match s' t1 = Let s' (substDB j s t1) (substDB (j + off) (shift off s) t2)
 substDB j s (Pair t1 t2) = Pair (substDB j s t1) (substDB j s t2)
 substDB j s (Fst t) = Fst (substDB j s t)
 substDB j s (Snd t) = Snd (substDB j s t)
@@ -75,13 +75,18 @@ isValue (Pair a b) = isValue a && isValue b
 isValue _   = False
 
 match :: Pat -> Term -> Maybe [(Symb,Term)]
-match (PVar name) t = Just[(name, t)]
+match (PVar name) t | isValue t = Just[(name, t)]
 match (PPair p1 p2) (Pair t1 t2) = (++) <$> match p1 t1 <*> match p2 t2
 match _             _            = Nothing
 
 betaRuleDB :: Term -> Term
 betaRuleDB (Lmb _ _ t :@: s) = shift (-1) $ substDB 0 (shift 1 s) t
-betaRuleDB (Let _ s t) = substDB 0 s t -- the same as upper
+betaRuleDB (Let pat trm t) | Just substlist <- match pat trm = sequentialBetaRule (reverse substlist) t
+ where
+  sequentialBetaRule :: [(Symb, Term)] -> Term -> Term
+  sequentialBetaRule ((_,s):hs) t = sequentialBetaRule hs (shift (-1) $ substDB 0 (shift 1 s) t)
+  sequentialBetaRule _          t = t
+  
 
 oneStep :: Term -> Maybe Term
 oneStep (If Tru t1 t2) = Just t1
@@ -93,11 +98,8 @@ oneStep (Fst t@(Pair t1 t2)) | isValue t1 && isValue t2 = Just t1
                              | otherwise                = Fst <$> oneStep t
 oneStep (Snd t@(Pair t1 t2)) | isValue t1 && isValue t2 = Just t2
                              | otherwise                = Snd <$> oneStep t
---oneStep (Pair t1 t2) | isValue t1 = (Pair t1) <$> oneStep t2
---                     | otherwise  = (\x -> Pair x t2) <$> oneStep t1
-oneStep (Pair t1 t2) = case oneStep t1 of
-                            Just t -> Just $ Pair t t2
-                            Nothing -> (Pair t1) <$> oneStep t2
+oneStep (Pair t1 t2) | isValue t1 && not (isValue t2)= (Pair t1) <$> oneStep t2
+                     | not (isValue t1) && not (isValue t2)  = (\x -> Pair x t2) <$> oneStep t1
 oneStep t@(t1@(Lmb _ _ _) :@: t2) | isValue t2 = Just $ betaRuleDB t
                                   | otherwise  = (t1 :@:) <$> (oneStep t2)
 oneStep (t1 :@: t2) = case oneStep t1 of
