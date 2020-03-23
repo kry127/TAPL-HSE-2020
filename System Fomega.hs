@@ -177,6 +177,68 @@ nf = nfDB oneStep
 -- конец вывода типов F omega --
 --------------------------------
 
+-- проблема 2 2 K --
+twoInOmega = lE "phi" (Ast :-> Ast) $ lE "s" (ForAll "alpha" Ast (Idx 0 :-> Idx 1 :@: Idx 0)) $
+             lE "alpha" Ast $ lE "z" (Idx 0) $ (Idx 2) :@: (Idx 3 :@: Idx 1) :@: (Idx 2 :@: Idx 1 :@: Idx 0)
+-- это типизированная 2 из начального слайда. Нам необходимо отправить некоторое K
+
+-- задание 1:
+-- комбинатор K
+cK = lE "alpha" Ast $ lE "beta" Ast $ lE "x" (Idx 1) $  lE "y" (Idx 1) $ Idx 1
+
+-- один из вариантов задать типы для "2 K", чтобы он был комбинатором
+twoK = (lE "s" (ForAll "alpha" Ast $ ForAll "beta" Ast(Idx 1 :-> Idx 0 :-> Idx 1))
+     $  lE "alpha" Ast $ lE "z" (Idx 0)
+     $ (Idx 2 :@: (Idx 1 :-> Idx 1) :@: Idx 1 :@:(Idx 2 :@: Idx 1 :@: Idx 1 :@: Idx 0))) :@: cK
+
+-- задание 2:
+--two = lE "s" undefined $ lE "z" undefined $ Idx 1 :@: (Idx 1 :@: Idx 0)
+two = lE "psi" ((Ast :-> Ast) :-> Ast :-> Ast) $ lE "s" succT $ lE "phi" (Ast :-> Ast) $ lE "z" zeroT $
+      Idx 2 :@: (Idx 3 :@: Idx 1) :@: (Idx 2 :@: Idx 1 :@: Idx 0)
+ where
+  succT = ForAll "phi" (Ast :-> Ast) $
+    ForAll "alpha" Ast (Idx 0 :-> (Idx 1 :@: Idx 0)) :-> ForAll "a" Ast (Idx 0 :-> (Idx 2 :@: Idx 1 :@: Idx 0))
+  zeroT =  ForAll "alpha" Ast (Idx 0 :-> (Idx 1 :@: Idx 0))
+-- целевой тип для удобства
+twoType = ForAll "psi" ((Ast :-> Ast) :-> Ast :-> Ast) (t1 :-> t2) where
+  t1 = ForAll "phi" (Ast :-> Ast) $
+    ForAll "a" Ast (Idx 0 :-> (Idx 1 :@: Idx 0)) :-> ForAll "a" Ast (Idx 0 :-> (Idx 2 :@: Idx 1 :@: Idx 0))
+  t2 = ForAll "varphi" (Ast :-> Ast) $
+    ForAll "a" Ast (Idx 0 :-> (Idx 1 :@: Idx 0)) :-> ForAll "a" Ast (Idx 0 :-> (Idx 2 :@: (Idx 2 :@: Idx 1) :@: Idx 0))
+
+
+-- задание 3:
+-- сама проблема 2 2 K
+-- Возможно, можно заюзать выведенную выше двойку, а также как-то подумать о задании 1
+{-
+twotwoK = (lE "s" undefined $  lE "z" undefined $ (Idx 1 :@: (Idx 1 :@: Idx 0)))
+      :@: (lE "s" undefined $  lE "z" undefined $ (Idx 1 :@: (Idx 1 :@: Idx 0)))
+      :@: (lE "x" undefined $  lE "y" undefined $ Idx 1)
+-}
+-- эта вещь способна типизироваться в случае, если:
+-- psi := \phi::(Ast->Ast) alpha::Ast => alpha -> phi alpha
+cKstrange = lE "phi" (Ast :-> Ast) $ lE "A" (ForAll "a" Ast (Idx 0 :-> (Idx 1 :@: Idx 0))) $ lE "alpha" Ast $ lE "B" (Idx 0)
+            $ Idx 2 :@: Idx 1
+cKstrangeT = ForAll "phi" (Ast :-> Ast) (ForAll "a" Ast (Idx 0 :-> Idx 1 :@: Idx 0) :-> ForAll "alpha" Ast (Idx 0 :-> (Idx 0 :-> Idx 1 :@: Idx 0)))
+psiStrange = lE "phi" (Ast :-> Ast) $ lE "alpha" Ast $ Idx 0 :-> Idx 1 :@: Idx 0
+psiStrange' = lE "phi" (Ast :-> Ast) $ lE "alpha" Ast $ Idx 0 :-> Idx 0  :-> Idx 1 :@: Idx 0
+psiTwo = lE "phi" (Ast :-> Ast) $ lE "alpha" Ast $ Idx 1 :@: (Idx 1 :@: Idx 0)
+
+-- теперь есть надежда использовать cKstrange качестве succ, а psiStrange использовать в качестве psi (согласуется)
+
+twoFromtwoK = two :@: psiStrange' :@: (two :@: psiStrange :@: cKstrange)
+-- не совсем то, что мы хотели :)
+
+-- будем плясать от более общей двойки, для коророй определим её psi и phi
+innerPsi = lE "phi" (Ast :-> Ast) $ lE "a" Ast $ Idx 1 :@: (Idx 1 :@: Idx 0)
+innerPhi = lE "a" Ast $ Idx 0 :-> Idx 0
+-- определим внутреннюю двойку в 2 2 K
+innerTwo = lE "phi" (Ast :-> Ast) $ lE "s" (ForAll "a" Ast (Idx 0 :-> Idx 1 :@: Idx 0)) $ lE "a" Ast $ lE "z" (Idx 0)
+           $ Idx 2 :@: (Idx 3 :@: Idx 1) :@: (Idx 2 :@: Idx 1 :@: Idx 0)
+-- и внутренний комбинатор K
+innerK = lE "phi" (Ast :-> Ast) $ lE "a" Ast $ lE "s" (Idx 0) $ lE "z" (Idx 1) $ Idx 1
+-- тогда:
+twotwoK = two :@: innerPsi :@: innerTwo :@: innerPhi :@: (innerK :@: innerPhi)
 
 -- ================================================================= --
 -- Следующие типы и термы могут оказаться полезными для тестирования --
@@ -195,7 +257,7 @@ natT = ForAll "a" Ast $ (Idx 0 :-> Idx 0) :-> Idx 0 :-> Idx 0
 natAbs body = lE "a" Ast $ lE "s" (Idx 0 :-> Idx 0) $ lE "z" (Idx 1) body
 zero  = natAbs $ Idx 0
 one   = natAbs $ Idx 1 :@: Idx 0
-two   = natAbs $ Idx 1 :@: (Idx 1 :@: Idx 0)
+--two   = natAbs $ Idx 1 :@: (Idx 1 :@: Idx 0)
 three = natAbs $ Idx 1 :@: (Idx 1 :@: (Idx 1 :@: Idx 0))
 four  = natAbs $ Idx 1 :@: (Idx 1 :@: (Idx 1 :@: (Idx 1 :@: Idx 0)))
 five  = natAbs $ Idx 1 :@: (Idx 1 :@: (Idx 1 :@: (Idx 1 :@: (Idx 1 :@: Idx 0))))
