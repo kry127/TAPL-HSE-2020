@@ -4,6 +4,7 @@ infixr 3 :->
 infixl 5 :*
 
 data Type = Boo
+          | Nat                   -- !!
           | Type :-> Type
           | Type :* Type
     deriving (Read,Show,Eq)
@@ -15,6 +16,10 @@ data Pat = PVar Symb
 data Term = Fls
           | Tru
           | If Term Term Term
+          | Zero                  -- !!
+          | Succ Term             -- !!
+          | Pred Term             -- !!
+          | IsZero Term           -- !!
           | Idx Int
           | Term :@: Term
           | Lmb Symb Type Term
@@ -22,12 +27,17 @@ data Term = Fls
           | Pair Term Term
           | Fst Term
           | Snd Term
+          | Fix Term              -- !
           deriving (Read,Show)
 
 instance Eq Term where
   Fls       == Fls          =  True
   Tru       == Tru          =  True
   If b u w  == If b1 u1 w1  =  b == b1 && u == u1 && w == w1
+  Zero      == Zero         =  True    -- !!
+  Succ u    == Succ u1      =  u == u1 -- !!
+  Pred u    == Pred u1      =  u == u1 -- !!
+  IsZero u  == IsZero u1    =  u == u1 -- !!
   Idx m     == Idx m1       =  m == m1
   (u:@:w)   == (u1:@:w1)    =  u == u1 && w == w1
   Lmb _ t u == Lmb _ t1 u1  =  t == t1 && u == u1
@@ -35,10 +45,25 @@ instance Eq Term where
   Pair u w  == Pair u1 w1   =  u == u1 && w == w1
   Fst z     == Fst z1       =  z == z1
   Snd z     == Snd z1       =  z == z1
+  Fix u     == Fix u1       =  u == u1 -- !
   _         == _            =  False
 
 newtype Env = Env [(Symb,Type)]
   deriving (Read,Show,Eq)
+
+
+isNV :: Term -> Bool
+isNV Zero     = True
+isNV (Succ t) = isNV t
+isNV _        = False
+
+isValue :: Term -> Bool
+isValue Tru = True
+isValue Fls = True
+isValue (Lmb _ _ _)  = True
+isValue (Pair a b)   = isValue a && isValue b
+isValue nv | isNV nv = True
+isValue _   = False
 
 pairCount :: Pat -> Int
 pairCount (PPair p1 p2) = pairCount p1 + pairCount p2
@@ -56,6 +81,10 @@ shift val term = go 0 val term
     go thres inc (Pair t1 t2) = Pair (go thres inc t1) (go thres inc t2)
     go thres inc (Fst t) = Fst (go thres inc t)
     go thres inc (Snd t) = Snd (go thres inc t)
+    go thres inc (Succ t) = Succ (go thres inc t)
+    go thres inc (Pred t) = Pred (go thres inc t)
+    go thres inc (IsZero t) = IsZero (go thres inc t)
+    go thres inc (Fix t) = Fix (go thres inc t)
     go thres inc t = t -- Tru, Fls
 
 substDB :: Int -> Term -> Term -> Term
@@ -68,14 +97,11 @@ substDB j s (Let p t1 t2) = let off = (pairCount p) in Let p (substDB j s t1) (s
 substDB j s (Pair t1 t2) = Pair (substDB j s t1) (substDB j s t2)
 substDB j s (Fst t) = Fst (substDB j s t)
 substDB j s (Snd t) = Snd (substDB j s t)
+substDB j s (Succ t) = Succ (substDB j s t)
+substDB j s (Pred t) = Pred (substDB j s t)
+substDB j s (IsZero t) = IsZero (substDB j s t)
+substDB j s (Fix t) = Fix (substDB j s t)
 substDB j s t = t -- Tru, Fls
-
-isValue :: Term -> Bool
-isValue Tru = True
-isValue Fls = True
-isValue (Lmb _ _ _) = True
-isValue (Pair a b) = isValue a && isValue b
-isValue _   = False
 
 match :: Pat -> Term -> Maybe [(Symb,Term)]
 match (PVar name) t | isValue t = Just[(name, t)]
@@ -104,7 +130,16 @@ oneStep (Pair t1 t2) | Just n1 <- oneStep t1 = Just $ Pair n1 t2
 oneStep (Pair t1 t2) | isValue t1, Just n2 <- oneStep t2 = Just $ Pair t1 n2
 oneStep t@(t1@(Lmb _ _ _) :@: t2) | isValue t2 = Just $ betaRuleDB t
                                   | otherwise  = (t1 :@:) <$> (oneStep t2)
-oneStep (t1 :@: t2) | Just n1 <- oneStep t1 = Just $ n1 :@: t2
+oneStep (t :@: t')  | Just n <- oneStep t = Just $ n :@: t'
+oneStep (Succ   t)  | Just n <- oneStep t = Just $ Succ   n
+oneStep (Pred   t)  | Just n <- oneStep t = Just $ Pred   n
+oneStep (IsZero t)  | Just n <- oneStep t = Just $ IsZero n
+oneStep (Fix    t)  | Just n <- oneStep t = Just $ Fix    n
+oneStep (Pred Zero) = Just Zero
+oneStep (Pred (Succ nv))      | isNV nv = Just nv
+oneStep (IsZero Zero)         = Just Tru
+oneStep (IsZero (Succ nv))    | isNV nv = Just Fls
+oneStep f@(Fix l@(Lmb _ _ _)) = Just $ betaRuleDB (l :@: f)
 oneStep _ = Nothing -- whnf -- no lambda or val reduction
 
 
@@ -149,4 +184,54 @@ infer e@(Env env) (Pair a b) | Just t1 <- infer e a
                              =  Just (t1 :* t2)
 infer env (Fst t) | Just (t1 :* t2) <- infer env t = Just t1
 infer env (Snd t) | Just (t1 :* t2) <- infer env t = Just t2
+infer env Zero = Just Nat
+infer env (Succ t)   | Just Nat <- infer env t = Just Nat
+infer env (Pred t)   | Just Nat <- infer env t = Just Nat
+infer env (IsZero t) | Just Nat <- infer env t = Just Boo
+infer env (Fix f) | Just (a :-> b) <- infer env f, a == b = Just b
 infer _   _ = Nothing
+
+
+-- полезно для тестирования
+one   = Succ Zero
+two   = Succ one
+three = Succ two
+four  = Succ three
+five  = Succ four
+six   = Succ five
+seven = Succ six
+eight = Succ seven
+nine  = Succ eight
+ten   = Succ nine
+
+plus_ = Lmb "f" (Nat :-> Nat :-> Nat) $ Lmb "m" Nat $ Lmb "n" Nat $
+  If (IsZero $ Idx 1)
+     (Idx 0)
+     (Succ $ Idx 2 :@: Pred (Idx 1) :@: Idx 0)
+plus = Fix plus_
+
+minus_ = Lmb "f" (Nat :-> Nat :-> Nat) $ Lmb "m" Nat $ Lmb "n" Nat $
+  If (IsZero $ Idx 0)
+     (Idx 1)
+     (Pred $ Idx 2 :@: Idx 1 :@: Pred (Idx 0))
+minus = Fix minus_
+
+eq_ = Lmb "f" (Nat :-> Nat :-> Boo) $ Lmb "m" Nat $ Lmb "n" Nat $
+  If (IsZero $ Idx 1)
+     (IsZero $ Idx 0)
+     (If (IsZero $ Idx 0)
+         (IsZero $ Idx 1)
+         (Idx 2 :@: Pred (Idx 1) :@: Pred (Idx 0)))
+eq = Fix eq_
+
+mult_ = Lmb "f" (Nat :-> Nat :-> Nat) $ Lmb "m" Nat $ Lmb "n" Nat $
+  If (IsZero $ Idx 1)
+     Zero
+     (plus :@: Idx 0 :@: (Idx 2 :@: Pred (Idx 1) :@: Idx 0))
+mult = Fix mult_
+
+power_  = Lmb "f" (Nat :-> Nat :-> Nat) $ Lmb "m" Nat $ Lmb "n" Nat $
+  If (IsZero $ Idx 0)
+     one
+     (mult :@: Idx 1 :@: (Idx 2 :@: Idx 1 :@: Pred (Idx 0)))
+power = Fix power_
