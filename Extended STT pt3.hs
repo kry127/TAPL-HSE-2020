@@ -2,11 +2,13 @@ type Symb = String
 infixl 4 :@: 
 infixr 3 :->
 infixl 5 :*
+infixl 4 :+
 
 data Type = Boo
-          | Nat                   -- !!
+          | Nat
           | Type :-> Type
           | Type :* Type
+          | Type :+ Type   -- !!
     deriving (Read,Show,Eq)
 
 data Pat = PVar Symb
@@ -16,10 +18,10 @@ data Pat = PVar Symb
 data Term = Fls
           | Tru
           | If Term Term Term
-          | Zero                  -- !!
-          | Succ Term             -- !!
-          | Pred Term             -- !!
-          | IsZero Term           -- !!
+          | Zero
+          | Succ Term
+          | Pred Term
+          | IsZero Term
           | Idx Int
           | Term :@: Term
           | Lmb Symb Type Term
@@ -27,26 +29,32 @@ data Term = Fls
           | Pair Term Term
           | Fst Term
           | Snd Term
-          | Fix Term              -- !
+          | Fix Term
+          | Inl Term Type            -- !!
+          | Inr Type Term            -- !!
+          | Case Term Symb Term Term -- !!
           deriving (Read,Show)
 
 instance Eq Term where
-  Fls       == Fls          =  True
-  Tru       == Tru          =  True
-  If b u w  == If b1 u1 w1  =  b == b1 && u == u1 && w == w1
-  Zero      == Zero         =  True    -- !!
-  Succ u    == Succ u1      =  u == u1 -- !!
-  Pred u    == Pred u1      =  u == u1 -- !!
-  IsZero u  == IsZero u1    =  u == u1 -- !!
-  Idx m     == Idx m1       =  m == m1
-  (u:@:w)   == (u1:@:w1)    =  u == u1 && w == w1
-  Lmb _ t u == Lmb _ t1 u1  =  t == t1 && u == u1
-  Let p u w == Let p1 u1 w1 =  p == p1 && u == u1 && w == w1
-  Pair u w  == Pair u1 w1   =  u == u1 && w == w1
-  Fst z     == Fst z1       =  z == z1
-  Snd z     == Snd z1       =  z == z1
-  Fix u     == Fix u1       =  u == u1 -- !
-  _         == _            =  False
+  Fls       == Fls                 =  True
+  Tru       == Tru                 =  True
+  If b u w  == If b1 u1 w1         =  b == b1 && u == u1 && w == w1
+  Zero      == Zero                =  True
+  Succ u    == Succ u1             =  u == u1
+  Pred u    == Pred u1             =  u == u1
+  IsZero u  == IsZero u1           =  u == u1
+  Idx m     == Idx m1              =  m == m1
+  (u:@:w)   == (u1:@:w1)           =  u == u1 && w == w1
+  Lmb _ t u == Lmb _ t1 u1         =  t == t1 && u == u1
+  Let p u w == Let p1 u1 w1        =  p == p1 && u == u1 && w == w1
+  Pair u w  == Pair u1 w1          =  u == u1 && w == w1
+  Fst z     == Fst z1              =  z == z1
+  Snd z     == Snd z1              =  z == z1
+  Fix u     == Fix u1              =  u == u1
+  Inl u t   == Inl u1 t1           =  u == u1 &&  t == t1           -- !
+  Inr t u   == Inr t1 u1           =  t == t1 && u == u1            -- !
+  Case u _ t s == Case u1 _ t1 s1  =  u == u1 && t == t1 && s == s1 -- !
+  _         == _                   =  False
 
 newtype Env = Env [(Symb,Type)]
   deriving (Read,Show,Eq)
@@ -63,6 +71,8 @@ isValue Fls = True
 isValue (Lmb _ _ _)  = True
 isValue (Pair a b)   = isValue a && isValue b
 isValue nv | isNV nv = True
+isValue (Inl t _) = isValue t
+isValue (Inr _ t) = isValue t
 isValue _   = False
 
 pairCount :: Pat -> Int
@@ -85,6 +95,9 @@ shift val term = go 0 val term
     go thres inc (Pred t) = Pred (go thres inc t)
     go thres inc (IsZero t) = IsZero (go thres inc t)
     go thres inc (Fix t) = Fix (go thres inc t)
+    go thres inc (Inl t typ) = Inl (go thres inc t) typ
+    go thres inc (Inr typ t) = Inr typ (go thres inc t)
+    go thres inc (Case t n l r) = Case (go thres inc t) n (go (thres+1) inc l) (go (thres+1) inc r)
     go thres inc t = t -- Tru, Fls
 
 substDB :: Int -> Term -> Term -> Term
@@ -101,6 +114,9 @@ substDB j s (Succ t) = Succ (substDB j s t)
 substDB j s (Pred t) = Pred (substDB j s t)
 substDB j s (IsZero t) = IsZero (substDB j s t)
 substDB j s (Fix t) = Fix (substDB j s t)
+substDB j s (Inl t typ) = Inl (substDB j s t) typ
+substDB j s (Inr typ t) = Inr typ (substDB j s t)
+substDB j s (Case t n l r) = Case (substDB j s t) n (substDB (j + 1) (shift 1 s) l) (substDB (j + 1) (shift 1 s) r)
 substDB j s t = t -- Tru, Fls
 
 match :: Pat -> Term -> Maybe [(Symb,Term)]
@@ -140,6 +156,11 @@ oneStep (Pred (Succ nv))      | isNV nv = Just nv
 oneStep (IsZero Zero)         = Just Tru
 oneStep (IsZero (Succ nv))    | isNV nv = Just Fls
 oneStep f@(Fix l@(Lmb _ _ _)) = Just $ betaRuleDB (l :@: f)
+oneStep (Case (Inl t tT) n l r) | isValue t = Just $ betaRuleDB ((Lmb n tT l) :@: t)
+oneStep (Case (Inr tT t) n l r) | isValue t = Just $ betaRuleDB ((Lmb n tT r) :@: t)
+oneStep (Case t name l r) | Just n <- oneStep t = Just $ Case n name l r
+oneStep (Inl t tT) | Just n <- oneStep t = Just $ Inl n tT
+oneStep (Inr tT t) | Just n <- oneStep t = Just $ Inr tT n
 oneStep _ = Nothing -- whnf -- no lambda or val reduction
 
 
@@ -175,20 +196,28 @@ infer (Env env) (Lmb name typt t) = fmap (\typs -> typt :-> typs) $ infer (Env$(
 infer env (t1 :@: t2) | Just typt <- infer env t2
                       , Just (typt' :-> typs) <- infer env t1
                       = if typt == typt' then Just typs else Nothing
+infer e@(Env env) (Pair a b) | Just t1 <- infer e a
+                             , Just t2 <- infer e b
+                             =  Just (t1 :* t2)
 infer e@(Env env) (Let pat pt t) = do
                      ptt <- infer e pt
                      env' <- inferPat pat ptt
                      infer (Env $ env' ++ env) t
-infer e@(Env env) (Pair a b) | Just t1 <- infer e a
-                             , Just t2 <- infer e b
-                             =  Just (t1 :* t2)
+infer e@(Env env) (Case t name l r) = do
+   (a :+ b) <- infer e t
+   r1 <- infer (Env $ (name ++ "1", a):env) l
+   r2 <- infer (Env $ (name ++ "2", b):env) r
+   True <- Just (r1 == r2)
+   return r1
 infer env (Fst t) | Just (t1 :* t2) <- infer env t = Just t1
 infer env (Snd t) | Just (t1 :* t2) <- infer env t = Just t2
-infer env Zero = Just Nat
+infer env Zero    = Just Nat
 infer env (Succ t)   | Just Nat <- infer env t = Just Nat
 infer env (Pred t)   | Just Nat <- infer env t = Just Nat
 infer env (IsZero t) | Just Nat <- infer env t = Just Boo
-infer env (Fix f) | Just (a :-> b) <- infer env f, a == b = Just b
+infer env (Fix f)    | Just (a :-> b) <- infer env f, a == b = Just b
+infer env (Inl t tT) | Just tT' <- infer env t = Just (tT' :+ tT)
+infer env (Inr tT t) | Just tT' <- infer env t = Just (tT :+ tT')
 infer _   _ = Nothing
 
 
