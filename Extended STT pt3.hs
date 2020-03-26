@@ -40,6 +40,10 @@ instance Eq Term where
 newtype Env = Env [(Symb,Type)]
   deriving (Read,Show,Eq)
 
+pairCount :: Pat -> Int
+pairCount (PPair p1 p2) = pairCount p1 + pairCount p2
+pairCount (PVar _) = 1
+
 shift :: Int -> Term -> Term
 shift val term = go 0 val term
   where
@@ -48,7 +52,7 @@ shift val term = go 0 val term
     go thres inc (t1 :@: t2) = go thres inc t1 :@: go thres inc t2
     go thres inc (Lmb name type' t) = Lmb name type' $ go (thres + 1) inc t
     go thres inc (If t1 t2 t3) = If (go thres inc t1) (go thres inc t2) (go thres inc t3)
-    go thres inc (Let s t1 t2) | Just off <- length <$> match s t1 = Let s (go thres inc t1) (go (thres+off) inc t2)
+    go thres inc (Let p trm t) = Let p (go thres inc trm) (go (thres+(pairCount p)) inc t)
     go thres inc (Pair t1 t2) = Pair (go thres inc t1) (go thres inc t2)
     go thres inc (Fst t) = Fst (go thres inc t)
     go thres inc (Snd t) = Snd (go thres inc t)
@@ -60,7 +64,7 @@ substDB j s t@(Idx x) | x == j    = s
 substDB j s (t1 :@: t2) = substDB j s t1 :@: substDB j s t2
 substDB j s (Lmb name type' t) = Lmb name type' $ substDB (j + 1) (shift 1 s) t
 substDB j s (If t1 t2 t3) = If (substDB j s t1) (substDB j s t2) (substDB j s t3)
-substDB j s (Let s' t1 t2) | Just off <- length <$> match s' t1 = Let s' (substDB j s t1) (substDB (j + off) (shift off s) t2)
+substDB j s (Let p t1 t2) = let off = (pairCount p) in Let p (substDB j s t1) (substDB (j + off) (shift off s) t2)
 substDB j s (Pair t1 t2) = Pair (substDB j s t1) (substDB j s t2)
 substDB j s (Fst t) = Fst (substDB j s t)
 substDB j s (Snd t) = Snd (substDB j s t)
@@ -70,7 +74,6 @@ isValue :: Term -> Bool
 isValue Tru = True
 isValue Fls = True
 isValue (Lmb _ _ _) = True
-isValue (Let _ _ _) = True -- or False?
 isValue (Pair a b) = isValue a && isValue b
 isValue _   = False
 
@@ -81,30 +84,27 @@ match _             _            = Nothing
 
 betaRuleDB :: Term -> Term
 betaRuleDB (Lmb _ _ t :@: s) = shift (-1) $ substDB 0 (shift 1 s) t
-betaRuleDB (Let pat trm t) | Just substlist <- match pat trm = sequentialBetaRule (reverse substlist) t
- where
-  sequentialBetaRule :: [(Symb, Term)] -> Term -> Term
-  sequentialBetaRule ((_,s):hs) t = sequentialBetaRule hs (shift (-1) $ substDB 0 (shift 1 s) t)
-  sequentialBetaRule _          t = t
-  
+
+sequentialBetaRule :: [(Symb, Term)] -> Term -> Term
+sequentialBetaRule ((_,s):hs) t = sequentialBetaRule hs (shift (-1) $ substDB 0 (shift 1 s) t)
+sequentialBetaRule _          t = t
+
 
 oneStep :: Term -> Maybe Term
 oneStep (If Tru t1 t2) = Just t1
 oneStep (If Fls t1 t2) = Just t2
 oneStep (If t t1 t2) = fmap (\t -> If t t1 t2) (oneStep t)
-oneStep t@(Let s t1 t2) | isValue t1 = Just $ betaRuleDB t
-                        | otherwise  = (\x -> Let s x t2) <$> (oneStep t1)
+oneStep (Let pat trm t) | isValue trm, Just ls <- match pat trm = Just $ sequentialBetaRule (reverse ls) t
+oneStep (Let pat trm t) | Just r <- oneStep trm = Just $ Let pat r t
 oneStep (Fst t@(Pair t1 t2)) | isValue t1 && isValue t2 = Just t1
                              | otherwise                = Fst <$> oneStep t
 oneStep (Snd t@(Pair t1 t2)) | isValue t1 && isValue t2 = Just t2
                              | otherwise                = Snd <$> oneStep t
-oneStep (Pair t1 t2) | isValue t1 && not (isValue t2)= (Pair t1) <$> oneStep t2
-                     | not (isValue t1) && not (isValue t2)  = (\x -> Pair x t2) <$> oneStep t1
+oneStep (Pair t1 t2) | Just n1 <- oneStep t1 = Just $ Pair n1 t2
+oneStep (Pair t1 t2) | isValue t1, Just n2 <- oneStep t2 = Just $ Pair t1 n2
 oneStep t@(t1@(Lmb _ _ _) :@: t2) | isValue t2 = Just $ betaRuleDB t
                                   | otherwise  = (t1 :@:) <$> (oneStep t2)
-oneStep (t1 :@: t2) = case oneStep t1 of
-                            Just t' -> Just $ t' :@: t2
-                            Nothing -> Nothing
+oneStep (t1 :@: t2) | Just n1 <- oneStep t1 = Just $ n1 :@: t2
 oneStep _ = Nothing -- whnf -- no lambda or val reduction
 
 
@@ -115,33 +115,38 @@ nfDB f t = case f t of
 
 whnf = nfDB oneStep
 
+inferPat :: Pat -> Type -> Maybe [(Symb, Type)]
+inferPat (PVar name) t = Just $ [(name, t)]
+inferPat (PPair p1 p2) (t1 :* t2) | Just e1 <- inferPat p1 t1
+                                  , Just e2 <- inferPat p2 t2
+                                  = Just $ e2 ++ e1
+inferPat _             _          = Nothing
+
+checkPat :: Pat -> Type -> Maybe Env
+checkPat p t = Env <$> inferPat p t
+
 infer0 :: Term -> Maybe Type
 infer0 = infer $ Env []
 
 infer :: Env -> Term -> Maybe Type
 infer env Tru = Just Boo
 infer env Fls = Just Boo
-infer env (If cond a b) = case infer env cond of
-            Just Boo -> let
-                         t1 = infer env a
-                         t2 = infer env b
-                        in if t1 == t2 then t1 else Nothing
-            _        -> Nothing
+infer env (If cond a b) | Just Boo <- infer env cond
+                        , t1 <- infer env a
+                        , t2 <- infer env b
+                        = if t1 == t2 then t1 else Nothing
 infer (Env env) (Idx id) = Just (snd $ env !! id)
 infer (Env env) (Lmb name typt t) = fmap (\typs -> typt :-> typs) $ infer (Env$(name, typt):env) t
-infer env (t1 :@: t2) = case infer env t2 of
-                          Just typt -> case infer env t1 of
-                              Just (typt' :-> typs) -> if typt == typt' then Just typs else Nothing
-                              _                     -> Nothing
-                          _         -> Nothing
-infer e@(Env env) (Pair a b) = case infer e a of
-                                       Just t1 -> case infer e b of
-                                            Just t2 -> Just (t1 :* t2)
-                                            _       -> Nothing
-                                       _       -> Nothing
-infer env (Fst t) = case infer env t of
-                         Just (t1 :* t2) -> Just t1
-                         _               -> Nothing
-infer env (Snd t) = case infer env t of
-                         Just (t1 :* t2) -> Just t2
-                         _               -> Nothing
+infer env (t1 :@: t2) | Just typt <- infer env t2
+                      , Just (typt' :-> typs) <- infer env t1
+                      = if typt == typt' then Just typs else Nothing
+infer e@(Env env) (Let pat pt t) = do
+                     ptt <- infer e pt
+                     env' <- inferPat pat ptt
+                     infer (Env $ env' ++ env) t
+infer e@(Env env) (Pair a b) | Just t1 <- infer e a
+                             , Just t2 <- infer e b
+                             =  Just (t1 :* t2)
+infer env (Fst t) | Just (t1 :* t2) <- infer env t = Just t1
+infer env (Snd t) | Just (t1 :* t2) <- infer env t = Just t2
+infer _   _ = Nothing

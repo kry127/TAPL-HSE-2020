@@ -112,30 +112,19 @@ infer0 = infer $ Env []
 infer :: Env -> Term -> Maybe Type
 infer env Tru = Just Boo
 infer env Fls = Just Boo
-infer env (If cond a b) = case infer env cond of
-            Just Boo -> let
-                         t1 = infer env a
-                         t2 = infer env b
-                        in if t1 == t2 then t1 else Nothing
-            _        -> Nothing
+infer env (If cond a b) | Just Boo <- infer env cond
+                        , t1 <- infer env a
+                        , t2 <- infer env b
+                        = if t1 == t2 then t1 else Nothing
 infer (Env env) (Idx id) = Just (snd $ env !! id)
 infer (Env env) (Lmb name typt t) = fmap (\typs -> typt :-> typs) $ infer (Env$(name, typt):env) t
-infer env (t1 :@: t2) = case infer env t2 of
-                          Just typt -> case infer env t1 of
-                              Just (typt' :-> typs) -> if typt == typt' then Just typs else Nothing
-                              _                     -> Nothing
-                          _         -> Nothing
-infer e@(Env env) (Let name a b) = case infer e a of
-                                       Just t1 -> infer (Env$(name, t1):env) b
-                                       Nothing -> Nothing
-infer e@(Env env) (Pair a b) = case infer e a of
-                                       Just t1 -> case infer e b of
-                                            Just t2 -> Just (t1 :* t2)
-                                            _       -> Nothing
-                                       _       -> Nothing
-infer env (Fst t) = case infer env t of
-                         Just (t1 :* t2) -> Just t1
-                         _               -> Nothing
-infer env (Snd t) = case infer env t of
-                         Just (t1 :* t2) -> Just t2
-                         _               -> Nothing
+infer env (t1 :@: t2) | Just typt <- infer env t2
+                      , Just (typt' :-> typs) <- infer env t1
+                      = if typt == typt' then Just typs else Nothing
+infer e@(Env env) (Let name a b) | Just t1 <- infer e a = infer (Env$(name, t1):env) b
+infer e@(Env env) (Pair a b) | Just t1 <- infer e a
+                             , Just t2 <- infer e b
+                             =  Just (t1 :* t2)
+infer env (Fst t) | Just (t1 :* t2) <- infer env t = Just t1
+infer env (Snd t) | Just (t1 :* t2) <- infer env t = Just t2
+infer _   _ = Nothing
