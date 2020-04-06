@@ -51,8 +51,28 @@ unMeta ctx (TNF abs i ts) = do -- для NF-схем делаем рекурси
   ts' <- sequenceA $ (unMeta (abs ++ ctx)) <$> ts -- аппл. функтор, семантика: каждый с каждым
   return $ TNF abs i ts' -- обновляем все возможные Бёмовы хвостики
 
-unMeta0 :: Type -> [TNF]
-unMeta0 t = unMeta [] (Meta t)
+unMeta0 :: TNF -> [TNF]
+unMeta0 t = unMeta [] t
+
+isTerm :: TNF -> Bool
+isTerm (Meta _) = False
+isTerm (TNF _ _ tnfs) = isTerms tnfs
+
+isTerms :: [TNF] -> Bool
+isTerms tnfs = foldr (&&) True $ isTerm <$> tnfs
+
+allTNFGens :: Type -> [[TNF]]
+allTNFGens tau = fst $ break null $ iterate go [Meta tau]
+  where
+    go :: [TNF] -> [TNF]
+    go tnfs | isTerms tnfs = []
+    go tnfs  = concat $ unMeta0 <$> filter (not . isTerm) tnfs
+
+inhabGens :: Type -> [[TNF]]
+inhabGens tau = (filter isTerm) <$> allTNFGens tau
+
+inhabs :: Type -> [TNF]
+inhabs = concat . inhabGens
 
 --- tests
 tArr = TVar "a" :-> TVar "a"
