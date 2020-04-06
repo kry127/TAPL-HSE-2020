@@ -175,15 +175,17 @@ answer53 = lV "f" botT $ (Idx 0 :@> (botT :-> botT)) :@: (lT "a" $ (Idx 1 :@> (T
 answer61 = lV "f" boolT $ Idx 0 :@> boolT :@: Idx 0 
 answer62 = lV "f" boolT $ (Idx 0 :@> (ForAll "t" (TIdx 0 :-> TIdx 0 :-> TIdx 0))) :@: (lT "x" $ (Idx 1 :@> TIdx 0))
 
---answer7 = lV "s" undefined $ lV "z" undefined $ Idx 1 :@: (Idx 1 :@: Idx 0)
 a7pt1 = ForAll "a" (TIdx 0 :-> TIdx 1 :-> TIdx 0)
-a7pt2 = ForAll "a" (TIdx 0 :-> TIdx 0)
---answer7 = lV "s" (ForAll "a" (TIdx 0 :-> TIdx 1 :-> TIdx 0)) $ lV "z" (ForAll "a" (TIdx 0 :-> TIdx 1 :-> TIdx 1 :-> TIdx 0)) $ Idx 1 :@> (TIdx 1 :-> (ForAll "a" (TIdx 0 :-> TIdx 1 :-> TIdx 1 :-> TIdx 0))) :@: (Idx 1 :@> (ForAll "a" (TIdx 0 :-> TIdx 1 :-> TIdx 1 :-> TIdx 0)) :@: Idx 0)
---answer7 = lV "s" a7pt1 $ lV "z" a7pt2 $ (Idx 1 :@> (TIdx 0 :-> a7pt2)) :@: ((Idx 1 :@> a7pt2) :@: Idx 0)
-answer7 = lV "s" (ForAll "a" (TIdx 0 :-> TIdx 1 :-> TIdx 0)) $ lV "z" (ForAll "a" (TIdx 0 :-> TIdx 1 :-> TIdx 1 :-> TIdx 0)) $ Idx 1
+answer7 = lV "s" a7pt1 $ lT "a" $ lV "z" (TIdx 0) $ Idx 2 :@> (TIdx 3 :-> TIdx 1) :@: (Idx 2 :@> TIdx 1 :@: Idx 0)
 
 ty7 = ForAll "a" (TIdx 0 :-> TIdx 1 :-> TIdx 0) :-> ForAll "a" (TIdx 0 :-> TIdx 1 :-> TIdx 1 :-> TIdx 0)
 testOfAnsw7 = infer [TDecl "beta"] answer7 == Just ty7
+
+answer8 = lV "s" (ForAll "a" $ TIdx 0 :-> TIdx 2 :-> TIdx 1 :-> TIdx 0) $ lT "alpha" $
+          lV "z" (TIdx 0) $ Idx 2 :@> (TIdx 4 :-> TIdx 3 :-> TIdx 1) :@: (Idx 2 :@> TIdx 1 :@: Idx 0)
+
+ty8 = ForAll "a" (TIdx 0 :-> TIdx 2 :-> TIdx 1 :-> TIdx 0) :-> ForAll "a" (TIdx 0 :-> TIdx 2 :-> TIdx 1 :-> TIdx 2 :-> TIdx 1 :-> TIdx 0)
+testOfAnsw8 = infer [TDecl "gamma",TDecl "beta"] answer8 == Just ty8
 
 --- тесты
 botT = ForAll "a" (TIdx 0)
